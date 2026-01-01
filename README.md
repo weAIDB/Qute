@@ -37,7 +37,7 @@ python -c "import pyqpanda3; print('pyqpanda3 OK')"
 python -c "from pyqpanda3.qcloud import QCloudService; print('QCloud OK')"
 (Optional) Create the required folders if they do not exist:
 
-bash
+#bash
 mkdir path to results
 Running With Your QCloud API Token
 Do not hardcode the API token in source files. In CloudIDE, you can pass it via CLI or an environment variable.
@@ -47,14 +47,15 @@ bash
 python 02_run_low_selectivity_jobs.py --api-key "YOUR_API_TOKEN" ...
 Option B — Use an environment variable (recommended)
 
-bash
+#bash
+
 export ORIGINQC_API_KEY="YOUR_API_TOKEN"
 python 02_run_low_selectivity_jobs.py --api-key "$ORIGINQC_API_KEY" ...
 End-to-End Execution in CloudIDE
 Generate the plan (offline step; no API required):
 
-bash
-复制代码
+#bash
+
 python 01_build_low_selectivity_plan.py \
   --dataset-dir \path to dataset \
   --out \path_to_low_selectivity_plan.json \
@@ -65,8 +66,8 @@ python 01_build_low_selectivity_plan.py \
   --block-bits 4
 Submit jobs to the real backend (online step; API required):
 
-bash
-复制代码
+#bash
+
 export ORIGINQC_API_KEY="YOUR_API_TOKEN"
 python 02_run_low_selectivity_jobs.py \
   --api-key "$ORIGINQC_API_KEY" \
