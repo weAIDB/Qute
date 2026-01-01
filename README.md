@@ -31,7 +31,8 @@ If your workspace uses a different root path, update the `--dataset-dir`, `--pla
 
 Run these commands in the CloudIDE terminal to confirm the environment is ready:
 
-```bash
+```
+#bash
 python -V
 python -c "import pyqpanda3; print('pyqpanda3 OK')"
 python -c "from pyqpanda3.qcloud import QCloudService; print('QCloud OK')"
@@ -41,21 +42,21 @@ python -c "from pyqpanda3.qcloud import QCloudService; print('QCloud OK')"
 mkdir path to results
 Running With Your QCloud API Token
 Do not hardcode the API token in source files. In CloudIDE, you can pass it via CLI or an environment variable.
+```
 
 Option A — Pass via CLI argument
-bash
+```
+#bash
 python 02_run_low_selectivity_jobs.py --api-key "YOUR_API_TOKEN" ...
 Option B — Use an environment variable (recommended)
 
 #bash
-
 export ORIGINQC_API_KEY="YOUR_API_TOKEN"
 python 02_run_low_selectivity_jobs.py --api-key "$ORIGINQC_API_KEY" ...
 End-to-End Execution in CloudIDE
 Generate the plan (offline step; no API required):
 
 #bash
-
 python 01_build_low_selectivity_plan.py \
   --dataset-dir \path to dataset \
   --out \path_to_low_selectivity_plan.json \
@@ -64,10 +65,11 @@ python 01_build_low_selectivity_plan.py \
   --nbits-max 10 \
   --shots 2000 \
   --block-bits 4
+```
 Submit jobs to the real backend (online step; API required):
 
+```
 #bash
-
 export ORIGINQC_API_KEY="YOUR_API_TOKEN"
 python 02_run_low_selectivity_jobs.py \
   --api-key "$ORIGINQC_API_KEY" \
@@ -75,6 +77,7 @@ python 02_run_low_selectivity_jobs.py \
   --plan \path_to_low_selectivity_plan.json \
   --out  \path_to_low_selectivity_experiment_merged.json \
   --grover-iters 1
+```
 Notes on CloudIDE-Specific Behavior
 
 Wall-clock latency (timing.wall_time_sec) includes CloudIDE → QCloud submission overhead, cloud compilation/mapping, device queueing, execution, and result retrieval.
