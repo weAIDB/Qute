@@ -1,188 +1,78 @@
 # Qute
-# README — Low-Selectivity Equality Search on Origin Wukong (QCloud / pyqpanda3)
 
-This project runs a reproducible experiment for the SQL-style predicate:
+Qute is a prototype quantum database that treats quantum computation as a first-class execution option rather than a simulation-only extension of classical systems. Instead of running quantum algorithms on classical simulators or retrofitting existing databases for simulated workloads, Qute focuses on real-device execution and system-level integration.
 
-`SELECT * FROM low_selectivity_table WHERE value = 100;`
+At a high level, Qute:
 
-It uses a Grover-style kernel (compiled explicitly to the native gate set **U3 + CZ**) on the Origin Quantum cloud backend (**origin_wukong**) via `pyqpanda3`. The pipeline is modular: dataset parsing and plan generation are fully decoupled from cloud submission, probing, and result aggregation.
+1. Compiles an extended SQL form into gate-efficient quantum circuits.
+2. Uses a hybrid optimizer to choose between quantum and classical execution plans at runtime.
+3. Introduces selective quantum indexing for low-selectivity query patterns.
+4. Applies fidelity-preserving storage design under current qubit constraints.
 
----
-## Runtime Environment (Origin Quantum CloudIDE)
+The project is deployed on the real `origin_wukong` quantum processor. This repository contains the open-source prototype and an experiment workflow for low-selectivity equality search using a Grover-style kernel compiled to `U3 + CZ`.
 
-This project is intended to run **directly inside Origin Quantum’s CloudIDE** environment (the hosted workspace provided by OriginQ). The workflow and paths in this repository assume the CloudIDE filesystem layout and a pre-installed QCloud stack.
+## Purpose
 
-### Verified Environment Assumptions
-- **Execution context**: Origin Quantum CloudIDE (browser-based IDE + terminal)
-- **Python**: Available in the CloudIDE base image (Python 3.x)
-- **SDK**: `pyqpanda3` is available and provides:
-  - `pyqpanda3.core` for circuit construction
-  - `pyqpanda3.qcloud` for QCloud submission APIs
-- **Backend access**: Outbound calls to OriginQ QCloud services are permitted from CloudIDE
-- **Default directories used by this project**:
-  - Datasets: `/home/project/added/dataset/`
-  - Results:  `/home/project/added/results/`
+The current prototype in this repository provides a reproducible workflow for low-selectivity equality search experiments:
 
-If your workspace uses a different root path, update the `--dataset-dir`, `--plan`, and `--out` CLI arguments accordingly.
+1. Build a plan from CSV datasets.
+2. Probe device bit ordering.
+3. Submit Grover circuits to the real backend.
+4. Aggregate latency and hit metrics into one merged JSON report.
 
----
+The implementation uses a block-search strategy (`block_bits`, default `4`) and fixed Grover iteration count (`1`) to stay within hardware depth constraints.
 
-### Quick Sanity Checks (CloudIDE Terminal)
+## Repository Structure
 
-Run these commands in the CloudIDE terminal to confirm the environment is ready:
+- `01_build_low_selectivity_plan.py`: Build the experiment plan JSON from datasets.
+- `02_run_low_selectivity_jobs.py`: Run probe + cloud jobs using a plan JSON and API key.
+- `grover_kernel.py`: Grover circuit construction using only `U3` and `CZ` primitives.
+- `probe_bit_order.py`: Infer `qubit -> bitstring position` mapping on real hardware.
+- `qcloud_utils.py`: Robust job submission, polling, option configuration, and error capture.
+- `dataset/`: Input datasets (`low_selectivity_data_{k}.csv`).
+- `README.md`: Canonical project documentation.
 
-```
-#bash
+## Runtime Environment
+
+This repository is designed for Origin Quantum CloudIDE (Linux-like workspace with `pyqpanda3` available).
+
+Recommended assumptions:
+
+- Python 3.8+
+- `pyqpanda3` installed and importable
+- Access to OriginQ Cloud API token
+- Network access from CloudIDE to QCloud backend APIs
+
+Quick checks:
+
+```bash
 python -V
 python -c "import pyqpanda3; print('pyqpanda3 OK')"
 python -c "from pyqpanda3.qcloud import QCloudService; print('QCloud OK')"
-(Optional) Create the required folders if they do not exist:
-
-#bash
-mkdir path to results
-Running With Your QCloud API Token
-Do not hardcode the API token in source files. In CloudIDE, you can pass it via CLI or an environment variable.
 ```
 
-Option A — Pass via CLI argument
-```
-#bash
-python 02_run_low_selectivity_jobs.py --api-key "YOUR_API_TOKEN" ...
-Option B — Use an environment variable (recommended)
+## Data Requirements
 
-#bash
-export ORIGINQC_API_KEY="YOUR_API_TOKEN"
-python 02_run_low_selectivity_jobs.py --api-key "$ORIGINQC_API_KEY" ...
-End-to-End Execution in CloudIDE
-Generate the plan (offline step; no API required):
+Each dataset file must contain a `value` column:
 
-#bash
-python 01_build_low_selectivity_plan.py \
-  --dataset-dir \path to dataset \
-  --out \path_to_low_selectivity_plan.json \
-  --k-min 0 --k-max 10 \
-  --target-value 100 \
-  --nbits-max 10 \
-  --shots 2000 \
-  --block-bits 4
-```
-Submit jobs to the real backend (online step; API required):
+| value |
+|---|
+| 832 |
+| 613 |
+| 454 |
 
-```
-#bash
-export ORIGINQC_API_KEY="YOUR_API_TOKEN"
-python 02_run_low_selectivity_jobs.py \
-  --api-key "$ORIGINQC_API_KEY" \
-  --backend origin_wukong \
-  --plan \path_to_low_selectivity_plan.json \
-  --out  \path_to_low_selectivity_experiment_merged.json \
-  --grover-iters 1
-```
-Notes on CloudIDE-Specific Behavior
+Expected naming pattern:
 
-Wall-clock latency (timing.wall_time_sec) includes CloudIDE → QCloud submission overhead, cloud compilation/mapping, device queueing, execution, and result retrieval.
+- `low_selectivity_data_0.csv`
+- `low_selectivity_data_1.csv`
+- ...
+- `low_selectivity_data_10.csv`
 
-Some backend failures (e.g., mapping/pre-estimate rejection) are returned as runtime errors during job.status() polling. This project captures those failures and writes error_message into the merged JSON rather than terminating the run.
+The row index is treated as RID (record ID).
 
-If your CloudIDE session resets, results remain under /home/project/added/results/ unless the workspace storage is ephemeral in your account tier.
+## End-to-End Usage
 
-## 1. Project Overview
-
-### What this experiment does
-
-For dataset scales (N = 2^k) (with (k \in [0,10]) by default), the program:
-
-1. Loads the CSV dataset `low_selectivity_data_k.csv`
-2. Finds all row IDs (RIDs) where `value == 100` (the target predicate)
-3. Builds a **depth-safe** Grover circuit using a **block search** strategy:
-
-   * Fixed Grover active width: `block_bits` (default **4**)
-   * Fixed Grover iterations: **1** (as required by depth constraints)
-   * Fixed measured width: `nbits_max` (default **10**)
-4. Probes bit ordering on the real device to obtain a stable `qubit -> bitstring position` mapping
-5. Submits circuits to the real device and logs:
-
-   * Wall-clock latency per submission
-   * Circuit stats/top probabilities
-   * Hit probability mass and top-1 hit success
-6. Writes a single merged JSON result file for analysis/plotting.
-
-### Why block search
-
-The cloud backend enforces a maximum circuit depth. Direct multi-controlled Grover for increasing (k) rapidly exceeds platform admission limits (e.g., `layer over range`). Block search keeps the quantum circuit bounded while still allowing scale studies across datasets.
-
----
-
-## 2. Directory Layout
-
-Expected paths (as required by the experiment):
-
-* Datasets:
-  `/home/project/added/dataset/low_selectivity_data_0.csv`
-  `/home/project/added/dataset/low_selectivity_data_1.csv`
-  ...
-  `/home/project/added/dataset/low_selectivity_data_10.csv`
-
-* Outputs:
-  `/home/project/added/results/`
-
-Core scripts:
-
-* `01_build_low_selectivity_plan.py`
-  Reads datasets and generates a plan file (no API access required)
-
-* `02_run_low_selectivity_jobs.py`
-  Runs probe + submits jobs to the real backend using an explicit API token
-
-* `probe_bit_order.py`
-  Bit-order probe (U3-only probe circuits)
-
-* `grover_kernel.py`
-  Grover kernel construction (explicit **U3 + CZ only** compilation)
-
-* `qcloud_utils.py`
-  Robust job polling and error capture (handles backend mapping/pre-estimate errors safely)
-
-Optional plotting:
-
-* `plot_estimate4_calibrated.py` (if used)
-  Scale-vs-time plotting with estimate-model integration (optional)
-
----
-
-## 3. Requirements
-
-* Python 3.8+ recommended
-* `pyqpanda3` installed and importable
-* Access to Origin Quantum QCloud API token (from the OriginQ account portal)
-
-No configuration file is required; the API token is passed explicitly via CLI.
-
----
-
-## 4. Input Data Format
-
-Each dataset file is a CSV with one column:
-
-```csv
-value
-832
-613
-454
-25
-284
-...
-```
-
-The predicate is `value == 100`. Row indices are treated as RIDs.
-
----
-
-## 5. Step-by-Step Usage
-
-### Step 1 — Generate the experiment plan (offline)
-
-This step parses datasets and writes a plan JSON.
+### 1) Build the plan (offline)
 
 ```bash
 python 01_build_low_selectivity_plan.py \
@@ -195,145 +85,93 @@ python 01_build_low_selectivity_plan.py \
   --block-bits 4
 ```
 
-Outputs:
+Key arguments:
 
-* `/home/project/added/results/low_selectivity_plan.json`
+- `--block-bits`: Active Grover width per block (depth control).
+- `--nbits-max`: Fixed measured qubit width for consistent decoding.
+- `--target-value`: Equality value for the predicate.
 
-Key parameters:
-
-* `--block-bits 4` keeps the circuit depth within backend limits
-* `--nbits-max 10` fixes measurement width for stable decoding across scales
-
----
-
-### Step 2 — Run real-device probing + submissions (online, requires API token)
-
-```bash
-python 02_run_low_selectivity_jobs.py \
-  --api-key "YOUR_API_TOKEN" \
-  --backend origin_wukong \
-  --plan /home/project/added/results/low_selectivity_plan.json \
-  --out  /home/project/added/results/low_selectivity_experiment_merged.json \
-  --grover-iters 1
-```
-
-Outputs:
-
-* `/home/project/added/results/low_selectivity_experiment_merged.json`
-
-What it does internally:
-
-1. Runs `probe_bit_order.py` logic to infer measurement bit ordering
-2. Builds Grover circuits (U3 + CZ only)
-3. Submits each circuit, polls status, and retrieves probabilities
-4. Computes hit metrics and aggregates results into the merged JSON file
-
----
-
-## 6. Output Schema (Merged JSON)
-
-The output JSON contains:
-
-### `meta`
-
-* `backend`: backend name
-* `constraints`: e.g., `max_depth=500`, `grover_iters=1`, `block_bits`
-* `probe`: `qubit_to_pos` bit-order mapping and reference probe bitstrings
-* `options_applied`: best-effort backend option toggles (may be `{}` if not supported)
-
-### `records[]`
-
-Per `k` (dataset scale), the record contains:
-
-* Dataset info: `dataset_path`, `N_file`, `N_formula`
-* Block search info: `block_bits`, `block_id`, `local_targets`, `rep_target`
-* Execution info: `shots`, `grover_iters`, `timing.wall_time_sec`
-* Result info:
-
-  * `result.hit.p_any_hit`: total probability mass on true-hit RIDs
-  * `result.hit.top1_*`: the most probable bitstring, decoded RID, and hit flag
-  * `result.probs_topk`: top-k probability entries for debugging
-* `status`: `"OK"` or `"FAILED"`
-* `error_message`: backend error details if failed (mapping or pre-estimate rejection)
-
----
-
-## 7. Interpreting the Results
-
-### Latency
-
-`timing.wall_time_sec` is end-to-end wall time (submission → finished result), and typically includes:
-
-* cloud compilation + mapping
-* queueing/scheduling
-* execution + result retrieval
-
-### Hit metrics
-
-* `p_any_hit`: probability mass assigned to correct target RIDs
-* `top1_hit`: whether the most probable decoded RID is a correct match
-
-Note: With `block_bits=4` and `grover_iters=1`, the circuit shape is almost constant across k, so wall time may show limited scaling with N.
-
----
-
-## 8. Common Errors and Fixes
-
-### A) `failed to mapping for this circuit!`
-
-The backend cannot route/map the circuit to the hardware topology.
-Recommended mitigations:
-
-* Reduce `block_bits` (e.g., 4 → 3)
-* Keep `grover_iters=1`
-* Ensure you are using the U3/CZ-only kernel implementation
-
-### B) `QProg pre-estimate error: The layer is over range`
-
-The circuit exceeds backend admission limits (depth/layers).
-Fix:
-
-* Use block search (`--block-bits 4`)
-* Force `--grover-iters 1`
-* Avoid high-level multi-controlled operations without explicit decomposition
-
-### C) Bit-order confusion
-
-If hit rates look unexpectedly poor:
-
-* Confirm `probe.fallback_used` is `false`
-* Inspect `probe.qubit_to_pos` and validate with probe reference outputs
-
----
-
-## 9. Security Note (API Token)
-
-Avoid hardcoding tokens in source files. Preferred patterns:
-
-* Pass `--api-key` at runtime
-* Or use an environment variable, e.g.:
+### 2) Run probe + real-device jobs (online)
 
 ```bash
 export ORIGINQC_API_KEY="YOUR_API_TOKEN"
-python 02_run_low_selectivity_jobs.py --api-key "$ORIGINQC_API_KEY" ...
+python 02_run_low_selectivity_jobs.py \
+  --api-key "$ORIGINQC_API_KEY" \
+  --backend origin_wukong \
+  --plan /home/project/added/results/low_selectivity_plan.json \
+  --out /home/project/added/results/low_selectivity_experiment_merged.json \
+  --grover-iters 1
 ```
 
----
+Equivalent direct-token style:
 
-## 10. Reproducibility Checklist
+```bash
+python 02_run_low_selectivity_jobs.py --api-key "YOUR_API_TOKEN" ...
+```
 
-To reproduce the same experiment run:
+## Output Artifacts
 
-1. Keep the same dataset files under `/home/project/added/dataset`
-2. Use the same plan-generation parameters (`k`, `block_bits`, `shots`, `nbits_max`)
-3. Use the same backend name (`origin_wukong`)
-4. Record the merged JSON file as the single source of truth for analysis and plotting
+### Plan JSON (`low_selectivity_plan.json`)
 
----
+Contains:
 
-## 11. Suggested Next Extensions
+- Global settings (`k` range, `target_value`, `nbits_max`, `shots`, `block_bits`)
+- Per-scale records (`k`, dataset path, target RIDs, representative block fields)
 
-* Add simulator baselines to compare ideal vs real-device hit probability
-* Record per-job compilation time if the backend exposes it
-* Enforce constant selectivity (e.g., exactly one target per dataset) to simplify scaling interpretation
-* Replace Toffoli decomposition with a lower-depth relative-phase construction (if supported) to improve fidelity under depth limits
+### Merged Result JSON (`low_selectivity_experiment_merged.json`)
+
+Contains:
+
+- `meta`: backend, generation time, probe mapping, applied options, constraints
+- `records[]`: per-`k` execution results with timing, probabilities, and hit statistics
+
+Core per-record fields include:
+
+- `status`: `OK`, `FAILED`, `MISSING_DATASET`, or `SKIPPED_NO_TARGET`
+- `timing.wall_time_sec`: end-to-end wall time for that submission
+- `result.hit.p_any_hit`: probability mass on true-hit RIDs
+- `result.hit.top1_hit`: whether top-1 decoded RID is a true hit
+
+## Bit Order and Decoding
+
+The pipeline probes device bit ordering before running experiments.
+Decoded local RID is mapped back to global RID using:
+
+`global_rid = (block_id << block_bits) | local_rid`
+
+If probe mapping is incomplete, an identity fallback is used for missing entries and marked in metadata.
+
+## Failure Modes and Mitigations
+
+Common backend issues are captured as `error_message` instead of terminating the full run.
+
+Typical cases:
+
+- Mapping failure (for example, circuit routing rejection)
+- Pre-estimate depth or layer overflow
+- Poll timeout or empty probability payload
+
+Mitigations:
+
+- Reduce `--block-bits` (for example, `4 -> 3`)
+- Keep `--grover-iters 1`
+- Ensure circuit construction remains `U3 + CZ` only
+
+## Security and Reproducibility
+
+Security:
+
+- Do not hardcode API tokens.
+- Prefer runtime argument or environment variable injection.
+
+Reproducibility checklist:
+
+1. Use the same dataset files and naming pattern.
+2. Keep plan parameters unchanged (`k` range, `block_bits`, `shots`, `nbits_max`, `target_value`).
+3. Use the same backend (`origin_wukong`).
+4. Archive the merged JSON report as the analysis source of truth.
+
+## Notes
+
+- Wall time includes cloud submission, compilation or mapping, queueing, execution, and result retrieval.
+- Circuit depth constraints can dominate design decisions more than logical problem size.
